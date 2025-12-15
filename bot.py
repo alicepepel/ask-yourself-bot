@@ -5,17 +5,19 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.filters import StateFilter
+import json
+
 
 # ====== Настройки ======
 BOT_TOKEN = "6781609247:AAGEWMxkKtdWgOjRrMkMQRSJt-LdQBIg3Dg"
 DEV_MODE = True
 DEV_INTERVAL = 15
 
-QUESTIONS = [
-    "1. Какой подарок сделает тебя счастливым?",
-    "2. Как можно поддержать тебя в трудный период?",
-    "3. Ты можешь влюбиться в случайного прохожего?"
-]
+# ====== Загрузка вопросов из JSON ======
+with open("questions.json", "r", encoding="utf-8") as f:
+    QUESTIONS = json.load(f)
+
 EMOJIS = ["😇", "😉", "🥹"]
 SUBSCRIBERS = set()
 DAILY_INTROS = [
@@ -130,7 +132,7 @@ async def notify_old_users():
 import datetime
 import pytz
 
-SEND_HOURS = [12, 17, 22]  # часы по Москве для ежедневной рассылки
+SEND_HOURS = [12, 17, 23]  # часы по Москве для ежедневной рассылки
 
 async def send_daily_question(user_id: int):
     # Получаем уже заданные вопросы
@@ -328,37 +330,30 @@ async def support_command(message: types.Message):
         "Что-то не работает? Есть предложения, как сделать бот лучше? "
         "А может, хочешь поделиться вопросами? 😇 "
         "Мы обязательно добавим их в список!\n\n"
-        "Напиши сообщение, и оно точно долетит до техподдержки 🥰"
+        "Напиши сообщение, оно точно долетит до техподдержки 🥰"
     )
 
-@dp.message()
-async def handle_support_message(message: types.Message):
-    user_id = message.from_user.id
-    if user_id not in SUPPORT_STATE:
-        return
-    SUPPORT_STATE.remove(user_id)
-    # пересылаем админу
-    await bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            "📩 Новое сообщение в поддержку\n\n"
-            f"👤 User ID: {user_id}\n"
-            f"💬 Сообщение:\n{message.text or '[не текстовое сообщение]'}"
-        )
-    )
-    await message.answer(
-        "Спасибо! Админ прочитает в ближайшее время )"
-    )
-
-
-@dp.message()
-async def handle_daily_answer(message: types.Message):
+@dp.message(StateFilter(None))
+async def handle_message(message: types.Message):
     user_id = message.from_user.id
 
-    # Игнорируем, если юзер в поддержку
+    # Сначала проверяем поддержку
     if user_id in SUPPORT_STATE:
+        SUPPORT_STATE.remove(user_id)
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "📩 Новое сообщение в поддержку\n\n"
+                f"👤 User ID: {user_id}\n"
+                f"💬 Сообщение:\n{message.text or '[не текстовое сообщение]'}"
+            )
+        )
+        await message.answer(
+            "Спасибо! Админ прочитает в ближайшее время )"
+        )
         return
 
+    # Проверяем ежедневный вопрос
     user_state = DAILY_STATE.get(user_id)
     if not user_state or not user_state.get("waiting_answer"):
         return
@@ -374,12 +369,11 @@ async def handle_daily_answer(message: types.Message):
     # Сохраняем вопрос для share
     user_state["current_question_for_share"] = user_state.get("current_question", "Вопрос неизвестен")
 
-    # Отправляем кнопки "Хочу! / Не хочу" **НЕ через FSM, а напрямую**
+    # Отправляем кнопки "Хочу! / Не хочу"
     await message.answer(
         "Хочешь поделиться этим ответом?",
         reply_markup=share_buttons_more()
     )
-
 
 
 # ====== Запуск бота ======
