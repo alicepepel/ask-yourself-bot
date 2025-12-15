@@ -126,6 +126,65 @@ async def notify_old_users():
         except Exception as e:
             print(f"Ошибка при отправке {user_id}: {e}")
 
+
+import datetime
+import pytz
+
+SEND_HOURS = [12, 17, 22]  # часы по Москве для ежедневной рассылки
+
+async def send_daily_question(user_id: int):
+    # Получаем уже заданные вопросы
+    user_state = DAILY_STATE.setdefault(user_id, {})
+    asked = set(user_state.get("asked_questions", []))
+
+    # Выбираем новый вопрос
+    available = [q for q in QUESTIONS if q not in asked]
+    if not available:
+        # Если вопросы закончились, сбрасываем и уведомляем
+        user_state["asked_questions"] = []
+        await bot.send_message(
+            user_id,
+            "Ты прошёл все вопросы! 🎉 Начнём новый круг — используй /start"
+        )
+        return
+
+    question = random.choice(available)
+    asked.add(question)
+    user_state["asked_questions"] = list(asked)
+    user_state["current_question"] = question
+    user_state["waiting_answer"] = True
+
+    # Отправляем интро + вопрос
+    intro = random.choice(DAILY_INTROS)
+    await bot.send_message(user_id, intro)
+    await bot.send_message(user_id, question)
+
+
+
+async def daily_question_sender():
+    moscow_tz = pytz.timezone("Europe/Moscow")
+    last_sent_hour = None
+
+    while True:
+        if not SUBSCRIBERS:
+            await asyncio.sleep(60)
+            continue
+
+        now = datetime.datetime.now(moscow_tz)
+        current_hour = now.hour
+
+        if current_hour in SEND_HOURS and last_sent_hour != current_hour:
+            for user_id in list(SUBSCRIBERS):
+                try:
+                    await send_daily_question(user_id)  # теперь без state
+                except Exception as e:
+                    print(f"Ошибка отправки {user_id}: {e}")
+            last_sent_hour = current_hour
+
+        await asyncio.sleep(60)
+
+
+
 # ====== Хендлер /start ======
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -290,6 +349,37 @@ async def handle_support_message(message: types.Message):
     await message.answer(
         "Спасибо! Админ прочитает в ближайшее время )"
     )
+
+
+@dp.message()
+async def handle_daily_answer(message: types.Message):
+    user_id = message.from_user.id
+
+    # Игнорируем, если юзер в поддержку
+    if user_id in SUPPORT_STATE:
+        return
+
+    user_state = DAILY_STATE.get(user_id)
+    if not user_state or not user_state.get("waiting_answer"):
+        return
+
+    # Игнорируем команды
+    if message.text and message.text.startswith("/"):
+        return
+
+    # Фиксируем ответ
+    user_state["last_answer"] = message.text if message.text else "[Неподдерживаемый формат]"
+    user_state["waiting_answer"] = False
+
+    # Сохраняем вопрос для share
+    user_state["current_question_for_share"] = user_state.get("current_question", "Вопрос неизвестен")
+
+    # Отправляем кнопки "Хочу! / Не хочу" **НЕ через FSM, а напрямую**
+    await message.answer(
+        "Хочешь поделиться этим ответом?",
+        reply_markup=share_buttons_more()
+    )
+
 
 
 # ====== Запуск бота ======
