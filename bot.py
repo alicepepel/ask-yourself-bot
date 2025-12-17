@@ -46,7 +46,7 @@ DAILY_INTROS = [
 ]
 
 # ====== Старые пользователи ======
-OLD_USERS = [411024223]
+OLD_USERS = [411024223, 965001148]
 old_users_notified = set()
 # ====== Состояние ежедневных вопросов ======
 # user_id -> {
@@ -160,6 +160,7 @@ async def notify_old_users():
             continue
         try:
             welcome_text = load_welcome_text()
+            # ✅ просто показываем кнопку, подписка только после клика
             await bot.send_message(chat_id=user_id, text=welcome_text, reply_markup=start_buttons())
             old_users_notified.add(user_id)
         except Exception as e:
@@ -300,7 +301,7 @@ async def daily_question_sender():
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     await state.clear()
-    SUBSCRIBERS.add(user_id)
+    # ❌ больше не добавляем в SUBSCRIBERS
     welcome_text = load_welcome_text()
     await message.answer(text=welcome_text, reply_markup=start_buttons())
 
@@ -308,10 +309,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "what_do")
 async def what_do_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    # ✅ только здесь подписка после нажатия кнопки
     SUBSCRIBERS.add(user_id)
     save_subscriber(user_id)
 
-    # 👇 сохраняем час подписки
+    # сохраняем час подписки, чтобы пропустить рассылку в этот час
     now = datetime.datetime.now(pytz.timezone("Europe/Moscow"))
     DAILY_STATE.setdefault(user_id, {})
     DAILY_STATE[user_id]["skip_daily_hour"] = now.hour
@@ -578,7 +580,7 @@ async def share_callback(callback: types.CallbackQuery, state: FSMContext):
         await send_to_channel(user_answer, content_type, current_question)
         await callback.message.answer(
             "Спасибо! Твой ответ уже тут t.me/pukmuk3000" if "more" in callback.data else
-            "Спасибо! Уверен, твой ответ будет интересен всем, кто на меня подписан 🤍 \nНайти его (и почитать других) можно в специальном канале t.me/pukmuk3000 \n\nЖди следующий вопрос завтра! Если захочешь дополнительный (или просто другой) вопрос, используй команду /morequestions"
+            "Спасибо! Уверен, твой ответ будет интересен всем, кто на меня подписан 🤍 \n\nНайти его (и почитать других) можно в специальном канале t.me/pukmuk3000 💬 \n\nЖди следующий вопрос завтра! Если захочешь дополнительный (или просто другой) вопрос, используй команду /morequestions"
         )
     else:
         await callback.message.answer(
