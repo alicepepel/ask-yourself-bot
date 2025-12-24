@@ -317,6 +317,7 @@ async def more_questions(message: types.Message, state: FSMContext):
     await state.set_state(Form.waiting_for_answer_more)
 
 
+
 # ====== Обработка ответов ======
 @dp.message(Form.waiting_for_answer)
 async def handle_answer_standard(message: types.Message, state: FSMContext):
@@ -328,27 +329,43 @@ async def handle_answer_standard(message: types.Message, state: FSMContext):
     # текст
     if message.text:
         user_data["text"] = message.text
-    if message.caption:
-        user_data["text"] = user_data.get("text", "") + ("\n" if "text" in user_data else "") + message.caption
 
     # фото
     if message.photo:
         user_data["media_id"] = message.photo[-1].file_id
         user_data["media_type"] = "photo"
+
     # видео
-    if message.video:
+    elif message.video:
         user_data["media_id"] = message.video.file_id
         user_data["media_type"] = "video"
-    # документ (MP4 музыка/видео)
-    if message.document:
-        mime = message.document.mime_type
-        if mime in ["video/mp4", "audio/mp4", "audio/mpeg"]:
+
+    # аудио (mp3)
+    elif message.audio:
+        user_data["media_id"] = message.audio.file_id
+        user_data["media_type"] = "mp3"
+
+    # документ (mp3/mp4)
+    elif message.document:
+        file_name = message.document.file_name or ""
+        mime = message.document.mime_type or ""
+
+        if file_name.lower().endswith(".mp3") or mime in ["audio/mpeg", "audio/mp3"]:
+            user_data["media_id"] = message.document.file_id
+            user_data["media_type"] = "mp3"
+        elif file_name.lower().endswith(".mp4") or mime in ["video/mp4", "audio/mp4"]:
             user_data["media_id"] = message.document.file_id
             user_data["media_type"] = "mp4"
+        else:
+            user_data["text"] = "[Неподдерживаемый формат]"
+
     # голосовое
-    if message.voice:
+    elif message.voice:
         user_data["media_id"] = message.voice.file_id
         user_data["media_type"] = "voice"
+
+    # DEBUG
+    print(f"[DEBUG] user_data={user_data}")
 
     # определяем content_type
     if "media_id" in user_data and "text" in user_data:
@@ -382,27 +399,43 @@ async def handle_answer_more(message: types.Message, state: FSMContext):
     # текст
     if message.text:
         user_data["text"] = message.text
-    if message.caption:
-        user_data["text"] = user_data.get("text", "") + ("\n" if "text" in user_data else "") + message.caption
 
     # фото
     if message.photo:
         user_data["media_id"] = message.photo[-1].file_id
         user_data["media_type"] = "photo"
+
     # видео
-    if message.video:
+    elif message.video:
         user_data["media_id"] = message.video.file_id
         user_data["media_type"] = "video"
-    # документ (MP4 музыка/видео)
-    if message.document:
-        mime = message.document.mime_type
-        if mime in ["video/mp4", "audio/mp4", "audio/mpeg"]:
+
+    # аудио (mp3)
+    elif message.audio:
+        user_data["media_id"] = message.audio.file_id
+        user_data["media_type"] = "mp3"
+
+    # документ (mp3/mp4)
+    elif message.document:
+        file_name = message.document.file_name or ""
+        mime = message.document.mime_type or ""
+
+        if file_name.lower().endswith(".mp3") or mime in ["audio/mpeg", "audio/mp3"]:
+            user_data["media_id"] = message.document.file_id
+            user_data["media_type"] = "mp3"
+        elif file_name.lower().endswith(".mp4") or mime in ["video/mp4", "audio/mp4"]:
             user_data["media_id"] = message.document.file_id
             user_data["media_type"] = "mp4"
+        else:
+            user_data["text"] = "[Неподдерживаемый формат]"
+
     # голосовое
-    if message.voice:
+    elif message.voice:
         user_data["media_id"] = message.voice.file_id
         user_data["media_type"] = "voice"
+
+    # DEBUG
+    print(f"[DEBUG] user_data={user_data}")
 
     # определяем content_type
     if "media_id" in user_data and "text" in user_data:
@@ -429,33 +462,42 @@ async def handle_answer_more(message: types.Message, state: FSMContext):
 async def send_to_channel(user_answer, content_type, current_question):
     caption_text = f"❓ {current_question}"
 
-    # только текст
     if content_type == "text":
-        text = user_answer.get("text") if isinstance(user_answer, dict) else user_answer
+        text = user_answer if isinstance(user_answer, str) else user_answer.get("text", "")
         await bot.send_message(chat_id="@pukmuk3000", text=f"{caption_text}\n\n{text}" if text else caption_text)
-        return
 
-    # голосовое
-    if content_type == "voice":
+    elif content_type == "voice":
         await bot.send_message(chat_id="@pukmuk3000", text=caption_text)
         await bot.send_voice(chat_id="@pukmuk3000", voice=user_answer["media_id"])
-        return
 
-    # медиа или комбинированное медиа + текст
-    media_id = user_answer.get("media_id")
-    media_type = user_answer.get("media_type")
-    text = user_answer.get("text", "")
+    elif content_type in ["photo", "video", "mp4", "mp3"]:
+        media_id = user_answer["media_id"]
+        text = user_answer.get("text", "")
 
-    if media_type == "photo":
-        await bot.send_photo(chat_id="@pukmuk3000", photo=media_id, caption=caption_text)
-    elif media_type == "video":
-        await bot.send_video(chat_id="@pukmuk3000", video=media_id, caption=caption_text)
-    elif media_type == "mp4":
-        await bot.send_document(chat_id="@pukmuk3000", document=media_id, caption=caption_text)
+        if content_type == "photo":
+            await bot.send_photo(chat_id="@pukmuk3000", photo=media_id, caption=caption_text)
+        elif content_type == "video":
+            await bot.send_video(chat_id="@pukmuk3000", video=media_id, caption=caption_text)
+        elif content_type in ["mp4", "mp3"]:
+            await bot.send_document(chat_id="@pukmuk3000", document=media_id, caption=caption_text)
 
-    # текст отдельным сообщением, если есть и это не голосовое
-    if text and media_type != "voice":
-        await bot.send_message(chat_id="@pukmuk3000", text=text)
+        if text:
+            await bot.send_message(chat_id="@pukmuk3000", text=text)
+
+    elif content_type == "combined":
+        media_id = user_answer["media_id"]
+        media_type = user_answer["media_type"]
+        text = user_answer.get("text", "")
+
+        if media_type == "photo":
+            await bot.send_photo(chat_id="@pukmuk3000", photo=media_id, caption=caption_text)
+        elif media_type == "video":
+            await bot.send_video(chat_id="@pukmuk3000", video=media_id, caption=caption_text)
+        elif media_type in ["mp4", "mp3"]:
+            await bot.send_document(chat_id="@pukmuk3000", document=media_id, caption=caption_text)
+
+        if text:
+            await bot.send_message(chat_id="@pukmuk3000", text=text)
 
 
 
