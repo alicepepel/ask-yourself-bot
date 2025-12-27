@@ -41,7 +41,8 @@ DAILY_INTROS = [
     "День без глубокомысленного вопроса прожит зря 😌 Поэтому...",
     "Привет! Очередной вопрос, который ты себе никогда не задавал 😈",
     "Я успел соскучиться за день 😇 Расскажи еще немного о себе?",
-    "Привет! Нашел еще один интересный вопрос для тебя..."
+    "Привет! Нашел еще один интересный вопрос для тебя...",
+    "Лучшее время дня - то, которое можно уделить себе 🤭 Поболтаем?"
 ]
 
 # ====== Старые пользователи ======
@@ -68,6 +69,24 @@ UPDATE_MESSAGE = (
     "✨ Уникальные вопросы без повторов \n"
     "🎙 Отправка текста, голосовыx, фото или музыки"
 )
+
+WELCOME_TEXT = ""
+WELCOME_MTIME = 0
+
+def load_welcome_text():
+    global WELCOME_TEXT, WELCOME_MTIME
+    try:
+        mtime = os.path.getmtime("welcome_message.json")
+        if mtime > WELCOME_MTIME:
+            with open("welcome_message.json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+                WELCOME_TEXT = data.get("text", "")
+            WELCOME_MTIME = mtime
+    except Exception as e:
+        print(f"Ошибка загрузки welcome_message.json: {e}")
+
+    return WELCOME_TEXT
+
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -140,7 +159,8 @@ async def notify_old_users():
         if user_id in old_users_notified:
             continue
         try:
-            await bot.send_message(chat_id=user_id, text=UPDATE_MESSAGE, reply_markup=start_buttons())
+            welcome_text = load_welcome_text()
+            await bot.send_message(chat_id=user_id, text=welcome_text, reply_markup=start_buttons())
             old_users_notified.add(user_id)
         except Exception as e:
             print(f"Ошибка при отправке {user_id}: {e}")
@@ -204,6 +224,17 @@ async def safe_send_message(user_id: int, *args, **kwargs):
 async def send_daily_question(user_id: int):
     # Получаем уже заданные вопросы
     user_state = DAILY_STATE.setdefault(user_id, {})
+
+    now = datetime.datetime.now(pytz.timezone("Europe/Moscow"))
+    current_hour = now.hour
+
+    # 👇 если пользователь подписался в этот час — пропускаем ОДИН РАЗ
+    skip_hour = user_state.get("skip_daily_hour")
+    if skip_hour == current_hour:
+        print(f"[DEBUG][DAILY] skip first daily for user {user_id} at hour {current_hour}")
+        user_state.pop("skip_daily_hour", None)
+        return
+
     asked = set(user_state.get("asked_questions", []))
 
     state = dp.fsm.get_context(bot=bot, user_id=user_id, chat_id=user_id)
@@ -270,20 +301,26 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     await state.clear()
     SUBSCRIBERS.add(user_id)
-    await message.answer(text=UPDATE_MESSAGE, reply_markup=start_buttons())
+    welcome_text = load_welcome_text()
+    await message.answer(text=welcome_text, reply_markup=start_buttons())
 
 # ====== Хендлеры what_do / want_example ======
 @dp.callback_query(lambda c: c.data == "what_do")
 async def what_do_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    SUBSCRIBERS.add(user_id)  # 👈 подключаем к ежедневной рассылке
-    save_subscriber(user_id)  # 👈 СБОР СТАТИСТИКИ
+    SUBSCRIBERS.add(user_id)
+    save_subscriber(user_id)
+
+    # 👇 сохраняем час подписки
+    now = datetime.datetime.now(pytz.timezone("Europe/Moscow"))
+    DAILY_STATE.setdefault(user_id, {})
+    DAILY_STATE[user_id]["skip_daily_hour"] = now.hour
 
     await callback.message.answer(
-        "💫 Ты можешь отвечать на вопросы в этом чате - получится что-то вроде личного дневника ) "
+        "💫 Ты можешь отвечать на вопросы в этом чате - получится что-то вроде личного дневника ✍️ "
         "Здесь будут храниться все твои ответы - вдруг ты захочешь их перечитать и переосмыслить. \n\n"
-        "💫 Также ты можешь анонимно отправить ответ в общий канал. "
-        "Там можно читать ответы других пользователей, но нельзя их комментировать. \n\n"
+        "💫 Также ты можешь анонимно отправить ответ в общий канал t.me/pukmuk3000. "
+        "Там можно читать ответы других пользователей, но нельзя их комментировать 👀 \n\n"
         "Хочешь пример вопроса?",
         reply_markup=want_example_button()
     )
@@ -329,6 +366,8 @@ async def handle_answer_standard(message: types.Message, state: FSMContext):
     # текст
     if message.text:
         user_data["text"] = message.text
+    if message.caption:
+        user_data["text"] = user_data.get("text", "") + ("\n" if "text" in user_data else "") + message.caption
 
     # фото
     if message.photo:
@@ -357,7 +396,8 @@ async def handle_answer_standard(message: types.Message, state: FSMContext):
             user_data["media_id"] = message.document.file_id
             user_data["media_type"] = "mp4"
         else:
-            user_data["text"] = "[Неподдерживаемый формат]"
+            if not user_data.get("text"):
+                user_data["text"] = "[Неподдерживаемый формат]"
 
     # голосовое
     elif message.voice:
@@ -399,6 +439,8 @@ async def handle_answer_more(message: types.Message, state: FSMContext):
     # текст
     if message.text:
         user_data["text"] = message.text
+    if message.caption:
+        user_data["text"] = user_data.get("text", "") + ("\n" if "text" in user_data else "") + message.caption
 
     # фото
     if message.photo:
@@ -427,7 +469,8 @@ async def handle_answer_more(message: types.Message, state: FSMContext):
             user_data["media_id"] = message.document.file_id
             user_data["media_type"] = "mp4"
         else:
-            user_data["text"] = "[Неподдерживаемый формат]"
+            if not user_data.get("text"):
+                user_data["text"] = "[Неподдерживаемый формат]"
 
     # голосовое
     elif message.voice:
@@ -458,55 +501,79 @@ async def handle_answer_more(message: types.Message, state: FSMContext):
     await state.set_state(Form.share_decision)
 
 
-# ====== Отправка в канал ======
 async def send_to_channel(user_answer, content_type, current_question):
+    if not isinstance(user_answer, dict):
+        print(f"[DEBUG][SEND] user_answer invalid: {user_answer}")
+        user_answer = {}
+
     caption_text = f"❓ {current_question}"
+    chat_id = "@pukmuk3000"
 
+    # ===== НОРМАЛИЗАЦИЯ =====
+    # если пришла строка (ежедневные вопросы)
+    if isinstance(user_answer, str):
+        if content_type == "text":
+            user_answer = {"text": user_answer}
+        else:
+            user_answer = {
+                "media_id": user_answer,
+                "media_type": content_type
+            }
+
+    # ---- только текст ----
     if content_type == "text":
-        text = user_answer if isinstance(user_answer, str) else user_answer.get("text", "")
-        await bot.send_message(chat_id="@pukmuk3000", text=f"{caption_text}\n\n{text}" if text else caption_text)
-
-    elif content_type == "voice":
-        await bot.send_message(chat_id="@pukmuk3000", text=caption_text)
-        await bot.send_voice(chat_id="@pukmuk3000", voice=user_answer["media_id"])
-
-    elif content_type in ["photo", "video", "mp4", "mp3"]:
-        media_id = user_answer["media_id"]
         text = user_answer.get("text", "")
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"{caption_text}\n\n{text}" if text else caption_text
+        )
+        return
 
-        if content_type == "photo":
-            await bot.send_photo(chat_id="@pukmuk3000", photo=media_id, caption=caption_text)
-        elif content_type == "video":
-            await bot.send_video(chat_id="@pukmuk3000", video=media_id, caption=caption_text)
-        elif content_type in ["mp4", "mp3"]:
-            await bot.send_document(chat_id="@pukmuk3000", document=media_id, caption=caption_text)
+    # ---- голосовое ----
+    if content_type == "voice":
+        await bot.send_message(chat_id=chat_id, text=caption_text)
+        await bot.send_voice(chat_id=chat_id, voice=user_answer["media_id"])
+        return
 
-        if text:
-            await bot.send_message(chat_id="@pukmuk3000", text=text)
+    media_id = user_answer.get("media_id")
+    media_type = user_answer.get("media_type")
+    text = user_answer.get("text", "")
 
-    elif content_type == "combined":
-        media_id = user_answer["media_id"]
-        media_type = user_answer["media_type"]
-        text = user_answer.get("text", "")
+    # ---- медиа ----
+    if media_type == "photo":
+        await bot.send_photo(chat_id=chat_id, photo=media_id, caption=caption_text)
 
-        if media_type == "photo":
-            await bot.send_photo(chat_id="@pukmuk3000", photo=media_id, caption=caption_text)
-        elif media_type == "video":
-            await bot.send_video(chat_id="@pukmuk3000", video=media_id, caption=caption_text)
-        elif media_type in ["mp4", "mp3"]:
-            await bot.send_document(chat_id="@pukmuk3000", document=media_id, caption=caption_text)
+    elif media_type == "video":
+        await bot.send_video(chat_id=chat_id, video=media_id, caption=caption_text)
 
-        if text:
-            await bot.send_message(chat_id="@pukmuk3000", text=text)
+    elif media_type == "mp3":
+        await bot.send_audio(
+            chat_id=chat_id,
+            audio=media_id,
+            caption=caption_text
+        )
+
+    elif media_type == "mp4":
+        await bot.send_document(
+            chat_id=chat_id,
+            document=media_id,
+            caption=caption_text
+        )
+
+    # ---- текст для комбинированных ----
+    if text:
+        await bot.send_message(chat_id=chat_id, text=text)
 
 
 
 @dp.callback_query(lambda c: c.data in ["share_yes", "share_no", "share_yes_more", "share_no_more"])
 async def share_callback(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    user_answer = data.get("user_answer")
+    print(f"[DEBUG][SHARE] FSM data = {data}")
+    user_answer = data.get("user_answer") or {}
     content_type = data.get("content_type", "text")
     current_question = data.get("current_question", "Вопрос неизвестен")
+
     if callback.data in ["share_yes", "share_yes_more"]:
         await send_to_channel(user_answer, content_type, current_question)
         await callback.message.answer(
@@ -624,16 +691,63 @@ async def handle_message(message: types.Message):
     # 🔧 КЛЮЧЕВОЕ: сохраняем ответ в FSM
     state = dp.fsm.get_context(bot=bot, user_id=user_id, chat_id=user_id)
 
+    user_data = {}
+
+    # текст / caption
     if message.text:
-        await state.update_data(user_answer=message.text, content_type="text")
-    elif message.voice:
-        await state.update_data(user_answer=message.voice.file_id, content_type="voice")
+        user_data["text"] = message.text
+    if message.caption:
+        user_data["text"] = user_data.get("text", "") + (
+            "\n" if "text" in user_data else ""
+        ) + message.caption
+
+    # аудио mp3
+    if message.audio:
+        user_data["media_id"] = message.audio.file_id
+        user_data["media_type"] = "mp3"
+
+    # документ mp3 / mp4
+    elif message.document:
+        file_name = message.document.file_name or ""
+        mime = message.document.mime_type or ""
+
+        if file_name.lower().endswith(".mp3") or mime in ["audio/mpeg", "audio/mp3"]:
+            user_data["media_id"] = message.document.file_id
+            user_data["media_type"] = "mp3"
+        elif file_name.lower().endswith(".mp4") or mime in ["video/mp4", "audio/mp4"]:
+            user_data["media_id"] = message.document.file_id
+            user_data["media_type"] = "mp4"
+
+    # фото
     elif message.photo:
-        await state.update_data(user_answer=message.photo[-1].file_id, content_type="photo")
+        user_data["media_id"] = message.photo[-1].file_id
+        user_data["media_type"] = "photo"
+
+    # видео
     elif message.video:
-        await state.update_data(user_answer=message.video.file_id, content_type="video")
+        user_data["media_id"] = message.video.file_id
+        user_data["media_type"] = "video"
+
+    # голос
+    elif message.voice:
+        user_data["media_id"] = message.voice.file_id
+        user_data["media_type"] = "voice"
+
+    # DEBUG
+    print(f"[DEBUG][DAILY] user_data={user_data}")
+
+    # content_type
+    if "media_id" in user_data and "text" in user_data:
+        content_type = "combined"
+    elif "media_id" in user_data:
+        content_type = user_data["media_type"]
     else:
-        await state.update_data(user_answer="[Неподдерживаемый формат]", content_type="text")
+        content_type = "text"
+
+    await state.update_data(
+        user_answer=user_data if user_data else {"text": "[Неподдерживаемый формат]"},
+        content_type=content_type
+    )
 
     # Отправляем кнопки "Хочу! / Не хочу"
     await message.answer(
